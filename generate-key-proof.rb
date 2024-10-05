@@ -11,6 +11,7 @@
 #   generate-key-proof.rb
 #     --client-id={CLIENT_ID}                  # -c {CLIENT_ID}
 #     --credential-issuer={CREDENTIAL_ISSUER}  # -i {CREDENTIAL_ISSUER}
+#     --did={DID_JWK_URL}                      # -d {DID_JWK_URL}
 #     --key={PRIVATE_KEY_IN_JWK_FORMAT}        # -k {PRIVATE_KEY_IN_JWK_FORMAT}
 #     --nonce={C_NONCE}                        # -n {C_NONCE}
 #
@@ -18,6 +19,13 @@
 # -------
 #
 #   Takahiko Kawasaki <taka@authlete.com>
+#   Jan Vereecken <ciao@janvereecken.com>
+#
+# CHANGELOG
+# -------
+#   2024-10-04
+#     - Make client_id optional
+#     - Add DID option
 #
 
 require 'bundler/inline'
@@ -42,7 +50,7 @@ def main(args)
   payload = build_payload(options)
 
   # Generate a JWS by signing with the key.
-  proof = sign(payload, options.key)
+  proof = sign(payload, options.key, options.did)
 
   # Write the key proof to the standard output.
   puts proof
@@ -57,25 +65,34 @@ def build_payload(options)
   now = Time.now.to_i
 
   # Payload of a key proof
-  {
-    iss:   options.client_id,
+  payload = {
     aud:   options.credential_issuer,
     iat:   now,
     nonce: options.nonce
   }
+
+  # Optional client_id attribute
+  payload[:iss] = options.client_id if options.client_id
+
+  payload
 end
 
 
 #------------------------------------------------------------
 # Generate a JWS by signing with the key.
 #------------------------------------------------------------
-def sign(payload, jwk)
+def sign(payload, jwk, did)
   # Prepare a JWT with the header and the payload.
   jwt = JSON::JWT.new(payload)
 
   # Set up some header parameters.
   jwt.typ = 'openid4vci-proof+jwt'
-  jwt.jwk = jwk.normalize  # to a public key
+
+  if did
+    jwt.kid = did
+  else
+    jwt.jwk = jwk.normalize  # to a public key
+  end
 
   # Sign the JWT with the key and convert it to JWS.
   jwt.sign(jwk).to_s
@@ -88,16 +105,18 @@ end
 class Options < OptionParser
   DESC_CLIENT_ID         = "The identifier of the client application (wallet)."
   DESC_CREDENTIAL_ISSUER = "The identifier of the credential issuer."
+  DESC_DID               = "The DID:JWK to be used as the 'kid' in the JOSE header."
   DESC_KEY               = "A file containing a private key in the JWK format."
   DESC_NONCE             = "The 'c_nonce' value that has been issued from the token endpoint or the credential endpoint."
 
-  attr_reader :client_id, :credential_issuer, :key, :nonce
+  attr_reader :client_id, :credential_issuer, :did, :key, :nonce
 
   def initialize
     super
 
     @client_id         = nil
     @credential_issuer = nil
+    @did               = nil
     @key               = nil
     @nonce             = nil
 
@@ -107,6 +126,10 @@ class Options < OptionParser
 
     self.on('-i CREDENTIAL_ISSUER', '--credential-issuer=CREDENTIAL_ISSUER', DESC_CREDENTIAL_ISSUER) do |issuer|
       @credential_issuer = issuer
+    end
+
+    self.on('-d DID', '--did=DID', DESC_DID) do |did|
+      @did = did
     end
 
     self.on('-k FILE', '--key=FILE', DESC_KEY) do |file|
@@ -135,7 +158,6 @@ class Options < OptionParser
   public
 
   def verify
-    error_if_missing(@client_id,         '--client-id=CLIENT_ID')
     error_if_missing(@credential_issuer, '--credential-issuer=CREDENTIAL_ISSUER')
     error_if_missing(@key,               '--key=FILE')
     error_if_missing(@nonce,             '--nonce=NONCE')

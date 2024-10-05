@@ -10,12 +10,12 @@
 # -----
 #
 #   generate-jwk.rb
-#     --key={PRIVATE_KEY_IN_JWK_FORMAT}
+#     --output={PRIVATE_KEY_IN_JWK_FORMAT}
 #
 # AUTHORS
 # -------
 #
-#   Jan Vereecken <jan.vereecken@hey.com>
+#   Jan Vereecken <ciao@janvereecken.com>
 #
 
 require 'bundler/inline'
@@ -38,25 +38,33 @@ def main(args)
   # Process the command line options.
   options = Options.process(args)
 
-  # Prepare the payload of the client assertion.
+  # Generate the JWK
   jwk = generate_jwk(options)
 
-  # Write the client assertion to the standard output.
+  # Write the jwk to the standard output.
   puts jwk
 end
 
 
 #------------------------------------------------------------
-# Prepare the payload of the client assertion.
+# Generate the JWK.
 #------------------------------------------------------------
 def generate_jwk(options)
-  ec = OpenSSL::PKey::EC.generate('prime256v1')
-  jwk = JSON::JWK.new(ec, { alg: 'ES256' })
+  case options.alg
+  when 'ES256'
+    ec = OpenSSL::PKey::EC.generate('prime256v1')
+    jwk = JSON::JWK.new(ec, { alg: options.alg })
+  when 'RS256'
+    rsa = OpenSSL::PKey::RSA.new(2048)
+    jwk = JSON::JWK.new(rsa, { alg: options.alg })
+  else
+    raise "Unsupported algorithm: #{options.alg}"
+  end
 
-  if options.key
-      File.open(options.key, 'w') do |f|
-        f.write(jwk.to_json)
-      end
+  if options.out
+    File.open(options.out, 'w') do |f|
+      f.write(jwk.to_json)
+    end
   end
 
   jwk
@@ -66,17 +74,23 @@ end
 # Command line options
 #------------------------------------------------------------
 class Options < OptionParser
-    DESC_KEY      = "A file containing a private key in the JWK format."
+  DESC_ALG = "The algorithm to use for the JWK (ES256, or RS256, default: ES256)."
+  DESC_OUT = "A file containing a private key in the JWK format."
 
-    attr_reader :key
+    attr_reader :out, :alg
 
   def initialize
     super
 
-    @key      = nil
+    @out = nil
+    @alg = 'ES256'
 
-    self.on('-k FILE', '--key=FILE', DESC_KEY) do |file|
-      @key = file
+    self.on('-a ALG', '--alg=ALG', DESC_ALG) do |alg|
+      @alg = alg
+    end
+
+    self.on('-o FILE', '--out=FILE', DESC_OUT) do |file|
+      @out = file
     end
   end
 
@@ -91,7 +105,6 @@ class Options < OptionParser
   public
 
   def verify
-    error_if_missing(@key,      '--key=FILE')
   end
 
   def self.process(args)
